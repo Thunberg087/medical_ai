@@ -1,79 +1,58 @@
-# Import libraries for working with datasets
-import os
-import pandas as pd
-from PIL import Image
-import numpy as np
+import argparse
+import sys
 import tensorflow as tf
-from sklearn.model_selection import train_test_split
-from keras.utils import to_categorical
-from keras.optimizers import Adam
-from sklearn.preprocessing import LabelBinarizer
-from preprocess import preprocess_image
+import numpy as np
+import json
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+
+batch_size = 32
+img_height = 224
+img_width = 224
+
 
 
 def main():
-    # Create a dataframe for the labeled images
-    df = pd.DataFrame(columns=['file', 'label', 'image'])
 
-    data_path = 'data2/'
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-f", "--file", help="The file to predict on")
+    parser.add_argument("-m", "--model", help="The trained model to use")
+    args = parser.parse_args()
 
-    # Loop through the directories containing the images and add them to the dataframe
-    for disease in os.listdir(data_path):
-        for filename in os.listdir(os.path.join(data_path, disease)):
-            df_dictionary = pd.DataFrame([{'file': os.path.join(data_path, disease, filename), 'label': disease}])
-            df = pd.concat([df, df_dictionary], ignore_index=True)
+    if not args.file:
+        print("Error: the file argument is required. Use the -f or --file flag to specify the file to predict on.")
+        sys.exit()
 
-    # Loop through the dataframe and preprocess the images
-    for index, row in df.iterrows():
-        df.loc[index, 'image'] = preprocess_image(row['file'])
-
-
-    df.drop('file', axis=1, inplace=True)
-
-
+    if not args.model:
+        print("Error: the model argument is required. Use the -m or --model flag to specify the model to use.")
+        sys.exit()
         
-    # Define the input layer of the neural network
-    input_layer = tf.keras.Input(shape=(224, 224, 3))
+    model = load_model(args.model)
 
-    # Define the first convolutional layer
-    conv1 = tf.keras.layers.Conv2D(32, (3, 3), activation='relu')(input_layer)
+    predict(args.file, model)
 
-    # Define the second convolutional layer
-    conv2 = tf.keras.layers.Conv2D(64, (3, 3), activation='relu')(conv1)
+def load_model(path):
+    return tf.keras.models.load_model(path)
 
-    # Define the max pooling layer
-    max_pool = tf.keras.layers.MaxPooling2D((2, 2))(conv2)
-
-    # Define the flattening layer
-    flatten = tf.keras.layers.Flatten()(max_pool)
-
-    # Define the first dense layer
-    dense1 = tf.keras.layers.Dense(128, activation='relu')(flatten)
-
-    # Define the output layer of the neural network
-    output_layer = tf.keras.layers.Dense(len(df['label'].unique()), activation='softmax')(dense1)
-
-    # Create a model object using the defined layers
-    model = tf.keras.Model(inputs=input_layer, outputs=output_layer)
+def get_class_names(): 
+    with open('class_names.json', 'r') as f:
+        class_names = json.load(f)
+        return class_names
     
 
-    print(df['image'].head())
+def predict(image_path, model):
+    img = tf.keras.utils.load_img(image_path, target_size=(img_height, img_width))
+    img_array = tf.keras.utils.img_to_array(img)
+    img_array = tf.expand_dims(img_array, 0) 
 
-    X_train, X_val, y_train, y_val = train_test_split(df['image'], df['label'], test_size=0.2, random_state=42) 
+    predictions = model.predict(img_array)
+    score = tf.nn.softmax(predictions[0])
     
-    print(X_train.shape)
-    print(X_val.shape)
-    print(y_train.shape)
-    print(y_val.shape)
-    
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])   
-    
-    model.fit(X_train, y_train, epochs=2, verbose=1, validation_data=(X_val, y_val))
-    
-    model.save('model.h5')
+    class_names = get_class_names()
 
+    print(
+        "This image most likely belongs to {} with a {:.2f} percent confidence."
+        .format(class_names[np.argmax(score)], 100 * np.max(score))
+    )
 
 
 if __name__ == '__main__':
